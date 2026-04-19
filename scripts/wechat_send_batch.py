@@ -49,10 +49,39 @@ def load_contacts(args):
     return deduped
 
 
+def classify_retry(error):
+    if not error:
+        return False
+    text = str(error).lower()
+    retry_keywords = ["没找到", "超时", "timeout", "焦点", "窗口", "搜索框", "输入框"]
+    return any(k in text for k in retry_keywords)
+
+
+
+def build_summary_payload(results):
+    total = len(results)
+    success = sum(1 for x in results if x.get("success"))
+    verified = sum(1 for x in results if x.get("verified"))
+    failed = total - success
+    retryable = sum(1 for x in results if x.get("retry_recommended"))
+    return {
+        "summary": {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "verified": verified,
+            "retry_recommended": retryable,
+        },
+        "results": results,
+    }
+
+
+
 def save_summary(log_dir: Path, results):
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     out = log_dir / f"wechat-batch-summary-{ts}.json"
-    out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = build_summary_payload(results)
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     logging.info("批量发送结果已保存: %s", out)
     return out
 
@@ -78,6 +107,9 @@ def main():
             "verified": False,
             "error": None,
             "index": idx,
+            "status": "pending",
+            "retry_recommended": False,
+            "sent_at": None,
         }
         try:
             logging.info("[%s/%s] 开始发送给: %s", idx, len(contacts), contact)
@@ -85,9 +117,13 @@ def main():
             verified, _texts = send_message(win, args.message, args.delay)
             item["success"] = True
             item["verified"] = bool(verified)
+            item["status"] = "sent_verified" if verified else "sent_unverified"
+            item["sent_at"] = datetime.now().isoformat(timespec="seconds")
             logging.info("[%s/%s] 完成: %s | verified=%s", idx, len(contacts), contact, verified)
         except Exception as e:
             item["error"] = str(e)
+            item["status"] = "failed"
+            item["retry_recommended"] = classify_retry(e)
             logging.exception("[%s/%s] 发送失败: %s", idx, len(contacts), contact)
             if args.stop_on_error:
                 results.append(item)
@@ -99,7 +135,8 @@ def main():
 
     success_count = sum(1 for x in results if x["success"])
     verified_count = sum(1 for x in results if x["verified"])
-    logging.info("批量发送完成: success=%s/%s, verified=%s/%s", success_count, len(results), verified_count, len(results))
+    retry_count = sum(1 for x in results if x.get("retry_recommended"))
+    logging.info("批量发送完成: success=%s/%s, verified=%s/%s, retry_recommended=%s", success_count, len(results), verified_count, len(results), retry_count)
     save_summary(log_dir, results)
 
 

@@ -40,3 +40,4 @@ python scripts/wechat_send_campaign.py --json contacts_messages.json --verify-ti
 - Runs in serial order
 - Writes a summary JSON to `wechat_automation_logs/`
 - Supports `--stop-on-error` if the run should abort on first failure
+- Version 2 summary JSON adds `status`, `retry_recommended`, `sent_at`, and top-level aggregate summary
